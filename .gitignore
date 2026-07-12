@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+*.log
+
+# Never upload customer/order exports
+workpexexports.xlsx
+UAE_Dispatch*.xlsx
+Oud_Al_Salam_Dispatch*.xlsx
+uploads/
+exports/
