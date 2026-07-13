@@ -202,26 +202,10 @@ def _duplicate_mask(export_df: pd.DataFrame) -> pd.Series:
     if export_df.empty:
         return pd.Series(dtype=bool)
 
-    duplicate_columns = [
-        "CUSTOMER_NAME",
-        "MOBILE_NO",
-        "ADDRESS_1",
-        "ADDRESS_2",
-        "ADDRESS_3",
-        "FLAT/VILLA NO",
-        "DELIVERY_CITY",
-        "COD_AMOUNT",
-        "REMARKS",
-    ]
-
-    normalized = export_df[duplicate_columns].copy()
-    for column in duplicate_columns:
-        if column == "COD_AMOUNT":
-            normalized[column] = pd.to_numeric(normalized[column], errors="coerce").fillna(0).round(2)
-        else:
-            normalized[column] = normalized[column].map(_normalized)
-
-    return normalized.duplicated(keep=False)
+    # A duplicate means the final UAE-local MOBILE_NO appears in more than one exported order.
+    # Blank/invalid mobile values are ignored and are not treated as duplicates.
+    mobile = export_df["MOBILE_NO"].map(_digits)
+    return mobile.ne("") & mobile.duplicated(keep=False)
 
 
 def create_workbook(export_df: pd.DataFrame, template_file) -> bytes:
