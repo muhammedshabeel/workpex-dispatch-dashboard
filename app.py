@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 
 from dispatch_core import DispatchError, build_export, read_workpex, transform
+from gcc_portal import build_gcc_export, transform_gcc
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "assets" / "UploadFormat.xlsx"
@@ -56,10 +57,14 @@ except DispatchError as exc:
     st.error(str(exc))
     st.stop()
 
-uae_df = transform(source_df, "uae")
-oas_df = transform(source_df, "oud_al_salam")
-bahrain_df = transform(source_df, "bahrain")
-qatar_df = transform(source_df, "qatar")
+try:
+    uae_df = transform(source_df, "uae")
+    oas_df = transform(source_df, "oud_al_salam")
+    bahrain_df = transform_gcc(source_df, "bahrain")
+    qatar_df = transform_gcc(source_df, "qatar")
+except (DispatchError, ValueError) as exc:
+    st.error(str(exc))
+    st.stop()
 
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Uploaded orders", f"{len(source_df):,}")
@@ -75,10 +80,8 @@ with open(TEMPLATE_PATH, "rb") as template:
     uae_result = build_export(io.BytesIO(raw_bytes), template, "uae")
 with open(TEMPLATE_PATH, "rb") as template:
     oas_result = build_export(io.BytesIO(raw_bytes), template, "oud_al_salam")
-with open(TEMPLATE_PATH, "rb") as template:
-    bahrain_result = build_export(io.BytesIO(raw_bytes), template, "bahrain")
-with open(TEMPLATE_PATH, "rb") as template:
-    qatar_result = build_export(io.BytesIO(raw_bytes), template, "qatar")
+bahrain_result = build_gcc_export(source_df, "bahrain")
+qatar_result = build_gcc_export(source_df, "qatar")
 
 with buttons[0]:
     st.button("KSA Dispatch", disabled=True, width="stretch", help="Reserved for the next phase")
@@ -112,7 +115,7 @@ with buttons[3]:
         width="stretch",
         disabled=bahrain_result.exported_rows == 0,
     )
-    st.caption("Country = Bahrain")
+    st.caption("Exact Bahrain portal format")
 with buttons[4]:
     st.download_button(
         "Qatar Dispatch",
@@ -122,7 +125,7 @@ with buttons[4]:
         width="stretch",
         disabled=qatar_result.exported_rows == 0,
     )
-    st.caption("Country = Qatar")
+    st.caption("Exact Qatar portal format")
 
 st.divider()
 preview_options = {
@@ -142,9 +145,11 @@ with st.expander("Current transformation rules"):
     st.markdown("""
 - **UAE Dispatch:** UAE orders excluding Al Huda, Premium Edition/Collection, and Luminex/Luminux.
 - **Oud Al Salam Dispatch:** UAE orders containing Al Huda, Premium Edition/Collection, or Luminex/Luminux.
-- **Bahrain Dispatch:** only rows where Country is Bahrain, aligned to the uploaded Bahrain 16-column format.
-- **Qatar Dispatch:** only rows where Country is Qatar, aligned to the uploaded Qatar 16-column format.
-- UAE phone numbers export as 9-digit local numbers. Qatar and Bahrain phone numbers export as 8-digit local numbers.
+- **Bahrain Dispatch:** exact 16-column Bahrain portal format with case-sensitive constants.
+- **Qatar Dispatch:** exact 16-column Qatar portal format with case-sensitive constants.
+- Portal headers, `source_id`, `Pricelist Name`, and `Units` are preserved exactly as shown in the approved template files.
+- Qatar and Bahrain phone numbers export as numeric 8-digit local numbers in both `partner_id` and `whatsapp_no`.
+- `zone_id (governarate)` exports only numeric zone IDs; `wilayat_id` preserves the source spelling and capitalization.
 - Any repeated final exported phone number is treated as a duplicate and every matching row is highlighted light red.
 - KSA remains reserved for the next phase.
 """)
