@@ -99,7 +99,6 @@ def _is_oas_product(value) -> bool:
 def _digits(value) -> str:
     if pd.isna(value):
         return ""
-    # Excel frequently stores phone numbers as floats, producing a false trailing .0.
     if isinstance(value, float) and value.is_integer():
         value = int(value)
     text = _clean(value)
@@ -116,13 +115,10 @@ def _as_uae_local(value) -> str:
         number = number[3:]
     elif number.startswith("0"):
         number = number[1:]
-
-    # UAE mobile numbers must be local 9-digit numbers beginning with 5.
     return number if len(number) == 9 and number.startswith("5") else ""
 
 
 def _uae_mobile(primary, secondary) -> str:
-    # Use Phone 1 when it is UAE. Only fall back to Phone 2 when Phone 1 is foreign/invalid.
     return _as_uae_local(primary) or _as_uae_local(secondary)
 
 
@@ -148,10 +144,12 @@ def transform(df: pd.DataFrame, dispatch_type: str) -> pd.DataFrame:
             for key, aliases in COLUMN_ALIASES.items()}
 
     country_series = df[cols["country"]].map(_is_uae)
+    product_series = df[cols["product"]].map(_is_oas_product)
+
     if dispatch_type == "uae":
-        filtered = df[country_series].copy()
+        # UAE Dispatch must exclude Oud Al Salam products to prevent duplicate dispatching.
+        filtered = df[country_series & ~product_series].copy()
     elif dispatch_type == "oud_al_salam":
-        product_series = df[cols["product"]].map(_is_oas_product)
         filtered = df[country_series & product_series].copy()
     else:
         raise DispatchError(f"Unsupported dispatch type: {dispatch_type}")
@@ -215,7 +213,6 @@ def create_workbook(export_df: pd.DataFrame, template_file) -> bytes:
         for col_index, value in enumerate(values, start=1):
             ws.cell(row=row_index, column=col_index, value=value)
 
-    # Preserve phone/reference values as text and amount as numeric.
     for row_index in range(2, ws.max_row + 1):
         ws.cell(row=row_index, column=2).number_format = "@"
         ws.cell(row=row_index, column=11).number_format = "@"
