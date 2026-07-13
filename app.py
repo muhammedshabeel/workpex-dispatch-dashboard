@@ -55,9 +55,9 @@ oas_df = transform(source_df, "oud_al_salam")
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Uploaded orders", f"{len(source_df):,}")
-m2.metric("UAE orders", f"{len(uae_df):,}")
+m2.metric("UAE dispatch orders", f"{len(uae_df):,}")
 m3.metric("Oud Al Salam orders", f"{len(oas_df):,}")
-m4.metric("Other-country orders", f"{len(source_df) - len(uae_df):,}")
+m4.metric("Other-country orders", f"{len(source_df) - len(uae_df) - len(oas_df):,}")
 
 st.subheader("Dispatch exports")
 buttons = st.columns(5)
@@ -68,7 +68,7 @@ with open(TEMPLATE_PATH, "rb") as template:
     oas_result = build_export(io.BytesIO(raw_bytes), template, "oud_al_salam")
 
 with buttons[0]:
-    st.button("KSA Dispatch", disabled=True, use_container_width=True, help="Reserved for the next phase")
+    st.button("KSA Dispatch", disabled=True, width="stretch", help="Reserved for the next phase")
     st.caption("Coming later")
 with buttons[1]:
     st.download_button(
@@ -76,7 +76,7 @@ with buttons[1]:
         data=oas_result.workbook_bytes,
         file_name="Oud_Al_Salam_Dispatch.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
         disabled=oas_result.exported_rows == 0,
     )
     st.caption("UAE + Al Huda / Premium / Luminex")
@@ -86,15 +86,15 @@ with buttons[2]:
         data=uae_result.workbook_bytes,
         file_name="UAE_Dispatch.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width="stretch",
         disabled=uae_result.exported_rows == 0,
     )
-    st.caption("All UAE orders")
+    st.caption("UAE orders excluding Al Huda, Premium and Luminex/Luminux")
 with buttons[3]:
-    st.button("Bahrain Dispatch", disabled=True, use_container_width=True, help="Reserved for the next phase")
+    st.button("Bahrain Dispatch", disabled=True, width="stretch", help="Reserved for the next phase")
     st.caption("Coming later")
 with buttons[4]:
-    st.button("Qatar Dispatch", disabled=True, use_container_width=True, help="Reserved for the next phase")
+    st.button("Qatar Dispatch", disabled=True, width="stretch", help="Reserved for the next phase")
     st.caption("Coming later")
 
 st.divider()
@@ -103,12 +103,12 @@ preview_df = uae_df if preview_type == "UAE Dispatch" else oas_df
 if preview_df.empty:
     st.warning("No matching rows were found for this dispatch type.")
 else:
-    st.dataframe(preview_df, use_container_width=True, hide_index=True, height=480)
+    st.dataframe(preview_df, width="stretch", hide_index=True, height=480)
 
 with st.expander("Current transformation rules"):
     st.markdown("""
-- **UAE Dispatch:** every row where Country is United Arab Emirates/UAE.
-- **Oud Al Salam Dispatch:** UAE rows whose Product contains Al Huda, Premium Edition/Collection, or Luminex/Luminux.
+- **UAE Dispatch:** UAE orders excluding products containing Al Huda, Premium Edition/Collection, or Luminex/Luminux.
+- **Oud Al Salam Dispatch:** UAE orders whose Product contains Al Huda, Premium Edition/Collection, or Luminex/Luminux.
 - Phone 1 is used only when it is a valid UAE mobile. If Phone 1 is foreign or invalid, Phone 2 is used. The export contains only 9-digit UAE-local mobile numbers without `971` or the leading `0`.
 - COD amount keeps the order value only when Payment Method is COD/Cash on Delivery. Every other payment method exports `0`.
 - KSA, Bahrain, and Qatar buttons are placeholders for the next phase.
