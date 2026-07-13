@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 from dispatch_core import DispatchError, build_export, read_workpex, transform
@@ -32,15 +31,22 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-uploaded = st.file_uploader("Upload Workpex order export", type=["xlsx", "xls"], help="Expected format: workpexexports.xlsx")
+uploaded = st.file_uploader(
+    "Upload Workpex order export",
+    type=["xlsx", "xls"],
+    help="Expected format: workpexexports.xlsx",
+)
 
 if not uploaded:
-    st.info("Upload a Workpex export to activate UAE and Oud Al Salam dispatch downloads.")
+    st.info("Upload a Workpex export to activate dispatch downloads.")
     cols = st.columns(5)
     names = ["KSA Dispatch", "Oud Al Salam Dispatch", "UAE Dispatch", "Bahrain Dispatch", "Qatar Dispatch"]
     for col, name in zip(cols, names):
         with col:
-            st.markdown(f'<div class="status-card"><h4>{name}</h4><p>Waiting for an uploaded file.</p></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="status-card"><h4>{name}</h4><p>Waiting for an uploaded file.</p></div>',
+                unsafe_allow_html=True,
+            )
     st.stop()
 
 raw_bytes = uploaded.getvalue()
@@ -52,12 +58,15 @@ except DispatchError as exc:
 
 uae_df = transform(source_df, "uae")
 oas_df = transform(source_df, "oud_al_salam")
+bahrain_df = transform(source_df, "bahrain")
+qatar_df = transform(source_df, "qatar")
 
-m1, m2, m3, m4 = st.columns(4)
+m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Uploaded orders", f"{len(source_df):,}")
-m2.metric("UAE dispatch orders", f"{len(uae_df):,}")
-m3.metric("Oud Al Salam orders", f"{len(oas_df):,}")
-m4.metric("Other-country orders", f"{len(source_df) - len(uae_df) - len(oas_df):,}")
+m2.metric("UAE dispatch", f"{len(uae_df):,}")
+m3.metric("Oud Al Salam", f"{len(oas_df):,}")
+m4.metric("Bahrain", f"{len(bahrain_df):,}")
+m5.metric("Qatar", f"{len(qatar_df):,}")
 
 st.subheader("Dispatch exports")
 buttons = st.columns(5)
@@ -66,6 +75,10 @@ with open(TEMPLATE_PATH, "rb") as template:
     uae_result = build_export(io.BytesIO(raw_bytes), template, "uae")
 with open(TEMPLATE_PATH, "rb") as template:
     oas_result = build_export(io.BytesIO(raw_bytes), template, "oud_al_salam")
+with open(TEMPLATE_PATH, "rb") as template:
+    bahrain_result = build_export(io.BytesIO(raw_bytes), template, "bahrain")
+with open(TEMPLATE_PATH, "rb") as template:
+    qatar_result = build_export(io.BytesIO(raw_bytes), template, "qatar")
 
 with buttons[0]:
     st.button("KSA Dispatch", disabled=True, width="stretch", help="Reserved for the next phase")
@@ -89,17 +102,37 @@ with buttons[2]:
         width="stretch",
         disabled=uae_result.exported_rows == 0,
     )
-    st.caption("UAE orders excluding Al Huda, Premium and Luminex/Luminux")
+    st.caption("UAE excluding Oud Al Salam products")
 with buttons[3]:
-    st.button("Bahrain Dispatch", disabled=True, width="stretch", help="Reserved for the next phase")
-    st.caption("Coming later")
+    st.download_button(
+        "Bahrain Dispatch",
+        data=bahrain_result.workbook_bytes,
+        file_name="Bahrain_Dispatch.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
+        disabled=bahrain_result.exported_rows == 0,
+    )
+    st.caption("Country = Bahrain")
 with buttons[4]:
-    st.button("Qatar Dispatch", disabled=True, width="stretch", help="Reserved for the next phase")
-    st.caption("Coming later")
+    st.download_button(
+        "Qatar Dispatch",
+        data=qatar_result.workbook_bytes,
+        file_name="Qatar_Dispatch.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
+        disabled=qatar_result.exported_rows == 0,
+    )
+    st.caption("Country = Qatar")
 
 st.divider()
-preview_type = st.radio("Preview", ["UAE Dispatch", "Oud Al Salam Dispatch"], horizontal=True)
-preview_df = uae_df if preview_type == "UAE Dispatch" else oas_df
+preview_options = {
+    "UAE Dispatch": uae_df,
+    "Oud Al Salam Dispatch": oas_df,
+    "Bahrain Dispatch": bahrain_df,
+    "Qatar Dispatch": qatar_df,
+}
+preview_type = st.radio("Preview", list(preview_options), horizontal=True)
+preview_df = preview_options[preview_type]
 if preview_df.empty:
     st.warning("No matching rows were found for this dispatch type.")
 else:
@@ -107,9 +140,11 @@ else:
 
 with st.expander("Current transformation rules"):
     st.markdown("""
-- **UAE Dispatch:** UAE orders excluding products containing Al Huda, Premium Edition/Collection, or Luminex/Luminux.
-- **Oud Al Salam Dispatch:** UAE orders whose Product contains Al Huda, Premium Edition/Collection, or Luminex/Luminux.
-- Phone 1 is used only when it is a valid UAE mobile. If Phone 1 is foreign or invalid, Phone 2 is used. The export contains only 9-digit UAE-local mobile numbers without `971` or the leading `0`.
-- COD amount keeps the order value only when Payment Method is COD/Cash on Delivery. Every other payment method exports `0`.
-- KSA, Bahrain, and Qatar buttons are placeholders for the next phase.
+- **UAE Dispatch:** UAE orders excluding Al Huda, Premium Edition/Collection, and Luminex/Luminux.
+- **Oud Al Salam Dispatch:** UAE orders containing Al Huda, Premium Edition/Collection, or Luminex/Luminux.
+- **Bahrain Dispatch:** only rows where Country is Bahrain, aligned to the uploaded Bahrain 16-column format.
+- **Qatar Dispatch:** only rows where Country is Qatar, aligned to the uploaded Qatar 16-column format.
+- UAE phone numbers export as 9-digit local numbers. Qatar and Bahrain phone numbers export as 8-digit local numbers.
+- Any repeated final exported phone number is treated as a duplicate and every matching row is highlighted light red.
+- KSA remains reserved for the next phase.
 """)
