@@ -50,7 +50,7 @@ COLUMN_ALIASES = {
     "qty2": ["QTY OF PRODUCT 2", "Quantity of Product 2"],
     "description": ["Lead Description", "Remarks", "Notes"],
     "national_code": ["National Code", "Reference No", "Order ID"],
-    "agent_name": ["Assigned User"],
+    "agent_name": ["Assigned", "Assigned User"],
     "source": ["Source"],
 }
 
@@ -102,7 +102,10 @@ def read_workpex(file) -> pd.DataFrame:
 
 
 def _is_country(value, country: str) -> bool:
-    return _normalized(value) in COUNTRY_NAMES[country]
+    text = _normalized(value)
+    if country == "uae" and text.startswith("united arab"):
+        return True
+    return text in COUNTRY_NAMES[country]
 
 
 def _is_oas_product(value) -> bool:
