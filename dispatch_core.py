@@ -12,14 +12,14 @@ from openpyxl.styles import PatternFill
 UAE_HEADERS = [
     "CUSTOMER_NAME", "MOBILE_NO", "LANDLINE_NO", "ADDRESS_1", "ADDRESS_2",
     "ADDRESS_3", "FLAT/VILLA NO", "DELIVERY_CITY", "COD_AMOUNT", "REMARKS",
-    "REFERENCE_NO", "OTHER_REMARKS", "COLLECT_RETURN (YES/NO)",
+    "REFERENCE_NO", "OTHER_REMARKS", "COLLECT_RETURN (YES/NO)", "Agent Name", "Source",
 ]
 
 GCC_HEADERS = [
     "client_order_ref", "customer_name", "partner_id", "whatsapp_no", "source_id",
     "Pricelist Name", "street_no", "building_no", "zone_id (governarate)",
     "wilayat_id", "city_id", "order_line/product_id", "order_line/product_uom",
-    "order_line/price_unit", "order_line/product_uom_qty", "remarks",
+    "order_line/price_unit", "order_line/product_uom_qty", "remarks", "Agent Name", "Source",
 ]
 
 COUNTRY_NAMES = {
@@ -50,6 +50,8 @@ COLUMN_ALIASES = {
     "qty2": ["QTY OF PRODUCT 2", "Quantity of Product 2"],
     "description": ["Lead Description", "Remarks", "Notes"],
     "national_code": ["National Code", "Reference No", "Order ID"],
+    "agent_name": ["Agent Name", "Agent", "Assigned Agent", "Sales Agent", "Owner Name"],
+    "source": ["Source", "Lead Source", "Order Source", "Campaign Source"],
 }
 
 
@@ -209,6 +211,8 @@ def _transform_uae(filtered: pd.DataFrame, cols: dict[str, str | None]) -> pd.Da
             "REFERENCE_NO": reference,
             "OTHER_REMARKS": _clean(get(row, "description")),
             "COLLECT_RETURN (YES/NO)": "NO",
+            "Agent Name": _clean(get(row, "agent_name")),
+            "Source": _clean(get(row, "source")),
         })
     return pd.DataFrame(records, columns=UAE_HEADERS)
 
@@ -248,6 +252,8 @@ def _transform_gcc(filtered: pd.DataFrame, cols: dict[str, str | None], country:
             "order_line/price_unit": _money(get(row, "amount")),
             "order_line/product_uom_qty": _money(get(row, "qty")) or 1,
             "remarks": _clean(get(row, "description")),
+            "Agent Name": _clean(get(row, "agent_name")),
+            "Source": _clean(get(row, "source")),
         })
     return pd.DataFrame(records, columns=GCC_HEADERS)
 
