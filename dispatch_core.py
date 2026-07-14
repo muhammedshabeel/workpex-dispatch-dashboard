@@ -50,8 +50,8 @@ COLUMN_ALIASES = {
     "qty2": ["QTY OF PRODUCT 2", "Quantity of Product 2"],
     "description": ["Lead Description", "Remarks", "Notes"],
     "national_code": ["National Code", "Reference No", "Order ID"],
-    "agent_name": ["Agent Name", "Agent", "Assigned Agent", "Sales Agent", "Owner Name"],
-    "source": ["Source", "Lead Source", "Order Source", "Campaign Source"],
+    "agent_name": ["Assigned User"],
+    "source": ["Source"],
 }
 
 
@@ -130,7 +130,6 @@ def _local_phone(value, country: str) -> str:
         number = number[len(code):]
     elif number.startswith("0"):
         number = number[1:]
-
     if country == "uae":
         return number if len(number) == 9 and number.startswith("5") else ""
     return number if len(number) == 8 else ""
@@ -166,17 +165,14 @@ def transform(df: pd.DataFrame, dispatch_type: str) -> pd.DataFrame:
     cols = _columns(df)
     country_col = cols["country"]
     product_col = cols["product"]
-
     if dispatch_type in {"uae", "oud_al_salam"}:
         country_mask = df[country_col].map(lambda value: _is_country(value, "uae"))
         product_mask = df[product_col].map(_is_oas_product)
         filtered = df[country_mask & (~product_mask if dispatch_type == "uae" else product_mask)].copy()
         return _transform_uae(filtered, cols)
-
     if dispatch_type in {"qatar", "bahrain"}:
         country_mask = df[country_col].map(lambda value: _is_country(value, dispatch_type))
         return _transform_gcc(df[country_mask].copy(), cols, dispatch_type)
-
     raise DispatchError(f"Unsupported dispatch type: {dispatch_type}")
 
 
@@ -228,7 +224,6 @@ def _transform_gcc(filtered: pd.DataFrame, cols: dict[str, str | None], country:
     }
     prefix, source_id, pricelist = settings[country]
     records = []
-
     for index, row in filtered.iterrows():
         phone = _best_phone(get(row, "primary_phone"), get(row, "secondary_phone"), country)
         reference = _clean(get(row, "national_code")) or f"{prefix}{index + 2}"
