@@ -157,14 +157,26 @@ def _join_nonempty(*values, sep=" | ") -> str:
     return sep.join(_clean(v) for v in values if _clean(v))
 
 
-def _delivery_city(city, state) -> str:
-    city_key = re.sub(r"[^a-z]", "", _normalized(city))
-    if city_key == "alain":
-        return "Al Ain"
-    if city_key == "westernregion":
-        return "Western Region"
+def _special_city_from_row(row: pd.Series) -> str:
+    for column in row.index:
+        header = _normalized(column)
+        if not (header.startswith("city") or "delivery city" in header):
+            continue
+        value = _normalized(row[column])
+        compact = re.sub(r"[^a-z]", "", value)
+        if compact == "alain":
+            return "Al Ain"
+        if compact.startswith("westernreg"):
+            return "Western Region"
+    return ""
 
-    text = _clean(state) or _clean(city)
+
+def _delivery_city(row: pd.Series, state) -> str:
+    special = _special_city_from_row(row)
+    if special:
+        return special
+
+    text = _clean(state)
     text = re.sub(r"\bEmirates?\b", "", text, flags=re.I)
     text = re.sub(r"\s+", " ", text).strip(" ,-/")
     aliases = {
@@ -232,7 +244,7 @@ def _transform_uae(filtered: pd.DataFrame, cols: dict[str, str | None]) -> pd.Da
             "ADDRESS_2": _clean(get(row, "state")),
             "ADDRESS_3": "",
             "FLAT/VILLA NO": "",
-            "DELIVERY_CITY": _delivery_city(get(row, "city"), get(row, "state")),
+            "DELIVERY_CITY": _delivery_city(row, get(row, "state")),
             "COD_AMOUNT": _cod_amount(get(row, "amount"), payment),
             "REMARKS": _join_nonempty(product_note, f"Payment: {_clean(payment)}" if _clean(payment) else ""),
             "REFERENCE_NO": reference,
