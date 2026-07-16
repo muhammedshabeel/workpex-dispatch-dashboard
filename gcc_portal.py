@@ -22,14 +22,22 @@ HEADERS = [
 
 SETTINGS = {
     "qatar": {
-        "countries": {"qatar", "qa"}, "code": "974", "prefix": "EMQ",
-        "source_id": "SCENT PASSION - QATAR", "pricelist": "Public Pricelist",
-        "location_file": "qatar_locations.csv", "zone_field": "ZONE",
+        "countries": {"qatar", "qa"},
+        "code": "974",
+        "prefix": "EMQ",
+        "source_id": "SCENT PASSION - QATAR",
+        "pricelist": "Public Pricelist",
+        "location_file": "qatar_locations.csv",
+        "zone_field": "ZONE",
     },
     "bahrain": {
-        "countries": {"bahrain", "bh"}, "code": "973", "prefix": "EMB",
-        "source_id": "SCENT PASSION - BAHRAIN", "pricelist": "Default BHD pricelist",
-        "location_file": "bahrain_locations.csv", "zone_field": "BLOCK",
+        "countries": {"bahrain", "bh"},
+        "code": "973",
+        "prefix": "EMB",
+        "source_id": "SCENT PASSION - BAHRAIN",
+        "pricelist": "Default BHD pricelist",
+        "location_file": "bahrain_locations.csv",
+        "zone_field": "BLOCK",
     },
 }
 
@@ -79,23 +87,22 @@ def _match_key(value) -> str:
 def _column(df: pd.DataFrame, aliases: list[str], required: bool = False) -> str | None:
     columns = {_norm(col): col for col in df.columns}
     for alias in aliases:
-        if _norm(alias) in columns:
-            return columns[_norm(alias)]
+        key = _norm(alias)
+        if key in columns:
+            return columns[key]
     if required:
         raise ValueError(f"Required column missing for portal export: {aliases[0]}")
     return None
 
 
 def _city_value(row: pd.Series) -> str:
-    """Use the first non-empty Workpex CITY-type column, including duplicate CITY.1 columns."""
-    candidates: list[str] = []
     for column in row.index:
         header = _norm(column)
         if header == "city" or header.startswith("city.") or "delivery city" in header or header in {"wilayat", "wilayat name"}:
             value = _clean(row[column])
             if value:
-                candidates.append(value)
-    return candidates[0] if candidates else ""
+                return value
+    return ""
 
 
 def _load_location_map(country: str) -> dict[str, str]:
@@ -124,7 +131,11 @@ def _location_zone(country: str, city: str) -> int | str | None:
     mapping = LOCATION_MAPS[country]
     zone = mapping.get(key)
     if not zone:
-        candidates = [(area_key, value) for area_key, value in mapping.items() if area_key in key or key in area_key]
+        candidates = [
+            (area_key, value)
+            for area_key, value in mapping.items()
+            if area_key and (area_key in key or key in area_key)
+        ]
         if candidates:
             candidates.sort(key=lambda item: len(item[0]), reverse=True)
             zone = candidates[0][1]
@@ -170,8 +181,8 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
         raise ValueError(f"Unsupported GCC country: {country}")
 
     cols = {
-        key: _column(source_df, key, required=key in {"name", "country", "product"})
-        for key in ALIASES
+        key: _column(source_df, aliases, required=key in {"name", "country", "product"})
+        for key, aliases in ALIASES.items()
     }
 
     mask = source_df[cols["country"]].map(
@@ -182,31 +193,21 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
     records = []
 
     def get(row, key):
-        col = cols.get(key)
-        return row[col] if col else ""
+        column = cols.get(key)
+        return row[column] if column else ""
 
     for index, row in filtered.iterrows():
-        phone = _phone(get(row, "phone1"), country) or _phone(
-            get(row, "phone2"), country
-        )
-
-        wilayat = _city_from_row(row)
-
-        if country == "bahrain":
-            zone = _location_zone(wilayat, BAHRAIN_ZONES)
-        else:
-            zone = _location_zone(wilayat, QATAR_ZONES)
+        phone = _phone(get(row, "phone1"), country) or _phone(get(row, "phone2"), country)
+        wilayat = _city_value(row)
+        zone = _location_zone(country, wilayat)
 
         product1 = _clean(get(row, "product"))
         product2 = _clean(get(row, "product2"))
-
         qty1 = _quantity(get(row, "qty")) if product1 else 0
         qty2 = _quantity(get(row, "qty2")) if product2 else 0
 
         total_amount = _number(get(row, "amount"))
         total_qty = qty1 + qty2
-
-        # Workpex provides the order total, so calculate a unit price.
         unit_price = total_amount / total_qty if total_qty else total_amount
 
         reference = _clean(get(row, "reference")) or f"{config['prefix']}{index + 2}"
@@ -231,11 +232,7 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
             "Payment Method": payment or None,
         }
 
-        same_product = (
-            product1
-            and product2
-            and _match_key(product1) == _match_key(product2)
-        )
+        same_product = bool(product1 and product2 and _match_key(product1) == _match_key(product2))
 
         if same_product:
             record = common.copy()
@@ -245,32 +242,30 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
                 "order_line/product_uom_qty": qty1 + qty2,
             })
             records.append(record)
+            continue
 
-        else:
-            if product1:
-                record1 = common.copy()
-                record1.update({
-                    "order_line/product_id": product1,
-                    "order_line/price_unit": unit_price,
-                    "order_line/product_uom_qty": qty1,
-                })
-                records.append(record1)
+        if product1:
+            record1 = common.copy()
+            record1.update({
+                "order_line/product_id": product1,
+                "order_line/price_unit": unit_price,
+                "order_line/product_uom_qty": qty1,
+            })
+            records.append(record1)
 
-            if product2:
-                # The additional product is exported as the next portal line.
-                # Customer and order details are left blank, matching the
-                # approved Bahrain/Qatar import-line layout.
-                record2 = {header: None for header in HEADERS}
-                record2.update({
-                    "order_line/product_id": product2,
-                    "order_line/product_uom": "Units",
-                    "order_line/price_unit": unit_price,
-                    "order_line/product_uom_qty": qty2,
-                    "Payment Method": payment or None,
-                })
-                records.append(record2)
+        if product2:
+            record2 = {header: None for header in HEADERS}
+            record2.update({
+                "order_line/product_id": product2,
+                "order_line/product_uom": "Units",
+                "order_line/price_unit": unit_price,
+                "order_line/product_uom_qty": qty2,
+                "Payment Method": payment or None,
+            })
+            records.append(record2)
 
     return pd.DataFrame(records, columns=HEADERS)
+
 
 def _workbook_bytes(export_df: pd.DataFrame) -> bytes:
     wb = Workbook()
