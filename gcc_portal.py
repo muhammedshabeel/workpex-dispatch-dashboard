@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import csv
 import io
 import re
+import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook
@@ -68,6 +71,49 @@ def _clean(value) -> str:
 
 def _norm(value) -> str:
     return re.sub(r"\s+", " ", _clean(value).lower()).strip()
+
+
+def _match_key(value) -> str:
+    text = unicodedata.normalize("NFKD", _clean(value))
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _load_bahrain_blocks() -> dict[str, str]:
+    path = Path(__file__).resolve().parent / "assets" / "bahrain_locations.csv"
+    mapping: dict[str, str] = {}
+    if not path.exists():
+        return mapping
+    with path.open(newline="", encoding="utf-8-sig") as file:
+        for row in csv.DictReader(file):
+            area = _clean(row.get("AREA"))
+            block = _clean(row.get("BLOCK"))
+            key = _match_key(area)
+            if key and block and key not in mapping:
+                mapping[key] = block
+    return mapping
+
+
+BAHRAIN_BLOCKS = _load_bahrain_blocks()
+
+
+def _bahrain_zone(city) -> int | str | None:
+    key = _match_key(city)
+    if not key:
+        return None
+    block = BAHRAIN_BLOCKS.get(key)
+    if not block:
+        candidates = [
+            (area_key, value)
+            for area_key, value in BAHRAIN_BLOCKS.items()
+            if area_key and (area_key in key or key in area_key)
+        ]
+        if candidates:
+            candidates.sort(key=lambda item: len(item[0]), reverse=True)
+            block = candidates[0][1]
+    if not block:
+        return None
+    return int(block) if block.isdigit() else block
 
 
 def _column(df: pd.DataFrame, key: str, required: bool = False) -> str | None:
@@ -136,10 +182,13 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
 
     for index, row in filtered.iterrows():
         phone = _phone(get(row, "phone1"), country) or _phone(get(row, "phone2"), country)
-        zone = _zone(get(row, "zone")) or _zone(get(row, "state"))
         wilayat = _clean(get(row, "city"))
-        if not wilayat and _zone(get(row, "state")) is None:
-            wilayat = _clean(get(row, "state"))
+        if country == "bahrain":
+            zone = _bahrain_zone(wilayat)
+        else:
+            zone = _zone(get(row, "zone")) or _zone(get(row, "state"))
+            if not wilayat and _zone(get(row, "state")) is None:
+                wilayat = _clean(get(row, "state"))
 
         product = _clean(get(row, "product"))
         reference = _clean(get(row, "reference")) or f"{config['prefix']}{index + 2}"
