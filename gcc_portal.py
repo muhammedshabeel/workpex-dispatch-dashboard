@@ -21,18 +21,14 @@ HEADERS = [
 
 SETTINGS = {
     "qatar": {
-        "countries": {"qatar", "qa"},
-        "code": "974",
-        "prefix": "EMQ",
-        "source_id": "SCENT PASSION - QATAR",
-        "pricelist": "Public Pricelist",
+        "countries": {"qatar", "qa"}, "code": "974", "prefix": "EMQ",
+        "source_id": "SCENT PASSION - QATAR", "pricelist": "Public Pricelist",
+        "location_file": "qatar_locations.csv", "zone_field": "ZONE",
     },
     "bahrain": {
-        "countries": {"bahrain", "bh"},
-        "code": "973",
-        "prefix": "EMB",
-        "source_id": "SCENT PASSION - BAHRAIN",
-        "pricelist": "Default BHD pricelist",
+        "countries": {"bahrain", "bh"}, "code": "973", "prefix": "EMB",
+        "source_id": "SCENT PASSION - BAHRAIN", "pricelist": "Default BHD pricelist",
+        "location_file": "bahrain_locations.csv", "zone_field": "BLOCK",
     },
 }
 
@@ -43,9 +39,6 @@ ALIASES = {
     "country": ["Country"],
     "street": ["Street", "Address", "Address 1"],
     "building": ["Building No", "Building Number", "Building", "Flat/Villa No"],
-    "zone": ["Zone", "Zone ID", "Zone Id", "Governorate ID", "Governarate ID"],
-    "state": ["State", "Province", "Governorate", "Governarate"],
-    "city": ["CITY", "City", "Delivery City", "Wilayat", "Wilayat Name"],
     "product": ["Product", "Product Name"],
     "qty": ["QTY", "Quantity"],
     "amount": ["Actual Amount", "Forecasted Amount", "Amount", "COD Amount"],
@@ -79,51 +72,61 @@ def _match_key(value) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def _load_bahrain_blocks() -> dict[str, str]:
-    path = Path(__file__).resolve().parent / "assets" / "bahrain_locations.csv"
+def _column(df: pd.DataFrame, aliases: list[str], required: bool = False) -> str | None:
+    columns = {_norm(col): col for col in df.columns}
+    for alias in aliases:
+        if _norm(alias) in columns:
+            return columns[_norm(alias)]
+    if required:
+        raise ValueError(f"Required column missing for portal export: {aliases[0]}")
+    return None
+
+
+def _city_value(row: pd.Series) -> str:
+    """Use the first non-empty Workpex CITY-type column, including duplicate CITY.1 columns."""
+    candidates: list[str] = []
+    for column in row.index:
+        header = _norm(column)
+        if header == "city" or header.startswith("city.") or "delivery city" in header or header in {"wilayat", "wilayat name"}:
+            value = _clean(row[column])
+            if value:
+                candidates.append(value)
+    return candidates[0] if candidates else ""
+
+
+def _load_location_map(country: str) -> dict[str, str]:
+    config = SETTINGS[country]
+    path = Path(__file__).resolve().parent / "assets" / config["location_file"]
     mapping: dict[str, str] = {}
     if not path.exists():
         return mapping
     with path.open(newline="", encoding="utf-8-sig") as file:
         for row in csv.DictReader(file):
             area = _clean(row.get("AREA"))
-            block = _clean(row.get("BLOCK"))
+            zone = _clean(row.get(config["zone_field"]))
             key = _match_key(area)
-            if key and block and key not in mapping:
-                mapping[key] = block
+            if key and zone and key not in mapping:
+                mapping[key] = zone
     return mapping
 
 
-BAHRAIN_BLOCKS = _load_bahrain_blocks()
+LOCATION_MAPS = {country: _load_location_map(country) for country in SETTINGS}
 
 
-def _bahrain_zone(city) -> int | str | None:
+def _location_zone(country: str, city: str) -> int | str | None:
     key = _match_key(city)
     if not key:
         return None
-    block = BAHRAIN_BLOCKS.get(key)
-    if not block:
-        candidates = [
-            (area_key, value)
-            for area_key, value in BAHRAIN_BLOCKS.items()
-            if area_key and (area_key in key or key in area_key)
-        ]
+    mapping = LOCATION_MAPS[country]
+    zone = mapping.get(key)
+    if not zone:
+        candidates = [(area_key, value) for area_key, value in mapping.items() if area_key in key or key in area_key]
         if candidates:
             candidates.sort(key=lambda item: len(item[0]), reverse=True)
-            block = candidates[0][1]
-    if not block:
+            zone = candidates[0][1]
+    if not zone:
         return None
-    return int(block) if block.isdigit() else block
-
-
-def _column(df: pd.DataFrame, key: str, required: bool = False) -> str | None:
-    columns = {_norm(col): col for col in df.columns}
-    for alias in ALIASES[key]:
-        if _norm(alias) in columns:
-            return columns[_norm(alias)]
-    if required:
-        raise ValueError(f"Required column missing for portal export: {ALIASES[key][0]}")
-    return None
+    return int(zone) if zone.isdigit() else zone
 
 
 def _digits(value) -> str:
@@ -158,20 +161,16 @@ def _quantity(value):
     return int(number) if number.is_integer() else number
 
 
-def _zone(value):
-    text = _clean(value)
-    return int(text) if re.fullmatch(r"\d+", text) else None
-
-
 def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
     if country not in SETTINGS:
         raise ValueError(f"Unsupported GCC country: {country}")
 
     cols = {
-        key: _column(source_df, key, required=key in {"name", "country", "product"})
-        for key in ALIASES
+        key: _column(source_df, aliases, required=key in {"name", "country", "product"})
+        for key, aliases in ALIASES.items()
     }
-    mask = source_df[cols["country"]].map(lambda value: _norm(value) in SETTINGS[country]["countries"])
+    country_col = cols["country"]
+    mask = source_df[country_col].map(lambda value: _norm(value) in SETTINGS[country]["countries"])
     filtered = source_df[mask].copy()
     config = SETTINGS[country]
     records = []
@@ -182,15 +181,8 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
 
     for index, row in filtered.iterrows():
         phone = _phone(get(row, "phone1"), country) or _phone(get(row, "phone2"), country)
-        wilayat = _clean(get(row, "city"))
-        if country == "bahrain":
-            zone = _bahrain_zone(wilayat)
-        else:
-            zone = _zone(get(row, "zone")) or _zone(get(row, "state"))
-            if not wilayat and _zone(get(row, "state")) is None:
-                wilayat = _clean(get(row, "state"))
-
-        product = _clean(get(row, "product"))
+        wilayat = _city_value(row)
+        zone = _location_zone(country, wilayat)
         reference = _clean(get(row, "reference")) or f"{config['prefix']}{index + 2}"
 
         records.append({
@@ -205,7 +197,7 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
             "zone_id (governarate)": zone,
             "wilayat_id": wilayat or None,
             "city_id": None,
-            "order_line/product_id": product,
+            "order_line/product_id": _clean(get(row, "product")),
             "order_line/product_uom": "Units",
             "order_line/price_unit": _number(get(row, "amount")),
             "order_line/product_uom_qty": _quantity(get(row, "qty")),
