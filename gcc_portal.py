@@ -17,6 +17,7 @@ HEADERS = [
     "Pricelist Name", "street_no", "building_no", "zone_id (governarate)",
     "wilayat_id", "city_id", "order_line/product_id", "order_line/product_uom",
     "order_line/price_unit", "order_line/product_uom_qty", "remarks", "Agent Name", "Source",
+    "Payment Method",
 ]
 
 SETTINGS = {
@@ -41,7 +42,10 @@ ALIASES = {
     "building": ["Building No", "Building Number", "Building", "Flat/Villa No"],
     "product": ["Product", "Product Name"],
     "qty": ["QTY", "Quantity"],
+    "product2": ["PRODUCT 2", "Product 2"],
+    "qty2": ["QTY OF PRODUCT 2", "Quantity of Product 2", "QTY 2", "Qty 2"],
     "amount": ["Actual Amount", "Forecasted Amount", "Amount", "COD Amount"],
+    "payment": ["Payment Method", "Payment"],
     "remarks": ["Lead Description", "Remarks", "Notes"],
     "reference": ["National Code", "Reference No", "Order ID"],
     "agent_name": ["Assigned", "Assigned User"],
@@ -166,11 +170,13 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
         raise ValueError(f"Unsupported GCC country: {country}")
 
     cols = {
-        key: _column(source_df, aliases, required=key in {"name", "country", "product"})
-        for key, aliases in ALIASES.items()
+        key: _column(source_df, key, required=key in {"name", "country", "product"})
+        for key in ALIASES
     }
-    country_col = cols["country"]
-    mask = source_df[country_col].map(lambda value: _norm(value) in SETTINGS[country]["countries"])
+
+    mask = source_df[cols["country"]].map(
+        lambda value: _norm(value) in SETTINGS[country]["countries"]
+    )
     filtered = source_df[mask].copy()
     config = SETTINGS[country]
     records = []
@@ -180,12 +186,33 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
         return row[col] if col else ""
 
     for index, row in filtered.iterrows():
-        phone = _phone(get(row, "phone1"), country) or _phone(get(row, "phone2"), country)
-        wilayat = _city_value(row)
-        zone = _location_zone(country, wilayat)
-        reference = _clean(get(row, "reference")) or f"{config['prefix']}{index + 2}"
+        phone = _phone(get(row, "phone1"), country) or _phone(
+            get(row, "phone2"), country
+        )
 
-        records.append({
+        wilayat = _city_from_row(row)
+
+        if country == "bahrain":
+            zone = _location_zone(wilayat, BAHRAIN_ZONES)
+        else:
+            zone = _location_zone(wilayat, QATAR_ZONES)
+
+        product1 = _clean(get(row, "product"))
+        product2 = _clean(get(row, "product2"))
+
+        qty1 = _quantity(get(row, "qty")) if product1 else 0
+        qty2 = _quantity(get(row, "qty2")) if product2 else 0
+
+        total_amount = _number(get(row, "amount"))
+        total_qty = qty1 + qty2
+
+        # Workpex provides the order total, so calculate a unit price.
+        unit_price = total_amount / total_qty if total_qty else total_amount
+
+        reference = _clean(get(row, "reference")) or f"{config['prefix']}{index + 2}"
+        payment = _clean(get(row, "payment"))
+
+        common = {
             "client_order_ref": reference,
             "customer_name": _clean(get(row, "name")),
             "partner_id": int(phone) if phone else None,
@@ -197,17 +224,53 @@ def transform_gcc(source_df: pd.DataFrame, country: str) -> pd.DataFrame:
             "zone_id (governarate)": zone,
             "wilayat_id": wilayat or None,
             "city_id": None,
-            "order_line/product_id": _clean(get(row, "product")),
             "order_line/product_uom": "Units",
-            "order_line/price_unit": _number(get(row, "amount")),
-            "order_line/product_uom_qty": _quantity(get(row, "qty")),
             "remarks": _clean(get(row, "remarks")) or None,
             "Agent Name": _clean(get(row, "agent_name")) or None,
             "Source": _clean(get(row, "source")) or None,
-        })
+            "Payment Method": payment or None,
+        }
+
+        same_product = (
+            product1
+            and product2
+            and _match_key(product1) == _match_key(product2)
+        )
+
+        if same_product:
+            record = common.copy()
+            record.update({
+                "order_line/product_id": product1,
+                "order_line/price_unit": unit_price,
+                "order_line/product_uom_qty": qty1 + qty2,
+            })
+            records.append(record)
+
+        else:
+            if product1:
+                record1 = common.copy()
+                record1.update({
+                    "order_line/product_id": product1,
+                    "order_line/price_unit": unit_price,
+                    "order_line/product_uom_qty": qty1,
+                })
+                records.append(record1)
+
+            if product2:
+                # The additional product is exported as the next portal line.
+                # Customer and order details are left blank, matching the
+                # approved Bahrain/Qatar import-line layout.
+                record2 = {header: None for header in HEADERS}
+                record2.update({
+                    "order_line/product_id": product2,
+                    "order_line/product_uom": "Units",
+                    "order_line/price_unit": unit_price,
+                    "order_line/product_uom_qty": qty2,
+                    "Payment Method": payment or None,
+                })
+                records.append(record2)
 
     return pd.DataFrame(records, columns=HEADERS)
-
 
 def _workbook_bytes(export_df: pd.DataFrame) -> bytes:
     wb = Workbook()
@@ -237,7 +300,7 @@ def _workbook_bytes(export_df: pd.DataFrame) -> bytes:
             if is_duplicate:
                 cell.fill = duplicate_fill
 
-    widths = [18, 24, 15, 15, 28, 24, 62, 18, 24, 24, 16, 34, 25, 24, 28, 34, 22, 22]
+    widths = [18, 24, 15, 15, 28, 24, 62, 18, 24, 24, 16, 34, 25, 24, 28, 34, 22, 22, 22]
     for index, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(index)].width = width
 
@@ -250,7 +313,7 @@ def _workbook_bytes(export_df: pd.DataFrame) -> bytes:
         ws.cell(row_no, 15).number_format = "0.##"
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:R{max(1, ws.max_row)}"
+    ws.auto_filter.ref = f"A1:S{max(1, ws.max_row)}"
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
