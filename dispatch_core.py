@@ -157,6 +157,33 @@ def _join_nonempty(*values, sep=" | ") -> str:
     return sep.join(_clean(v) for v in values if _clean(v))
 
 
+def _delivery_city(city, state) -> str:
+    city_text = _clean(city)
+    state_text = _clean(state)
+    text = city_text or state_text
+    text = re.sub(r"\bEmirates?\b", "", text, flags=re.I)
+    text = re.sub(r"\s+", " ", text).strip(" ,-/")
+    aliases = {
+        "abu dhabi": "Abu Dhabi",
+        "abudhabi": "Abu Dhabi",
+        "dubai": "Dubai",
+        "sharjah": "Sharjah",
+        "ajman": "Ajman",
+        "fujairah": "Fujairah",
+        "ras al khaimah": "Ras Al Khaimah",
+        "ras al-khaimah": "Ras Al Khaimah",
+        "rasalkhaimah": "Ras Al Khaimah",
+        "umm al quwain": "Umm Al Quwain",
+        "umm al-quwain": "Umm Al Quwain",
+        "umm alquwain": "Umm Al Quwain",
+        "al ain": "Al Ain",
+        "alain": "Al Ain",
+        "western region": "Western Region",
+        "westernregion": "Western Region",
+    }
+    return aliases.get(_normalized(text), text)
+
+
 def _columns(df: pd.DataFrame) -> dict[str, str | None]:
     return {
         key: _find_column(df, aliases, required=key in {"name", "country", "product"})
@@ -192,10 +219,11 @@ def _transform_uae(filtered: pd.DataFrame, cols: dict[str, str | None]) -> pd.Da
         qty2 = get(row, "qty2")
         payment = get(row, "payment")
         reference = _clean(get(row, "national_code")) or f"WPX-{index + 2}"
-        product_note = _join_nonempty(
+        product_parts = [
             f"{_clean(product)} x {_clean(qty) or '1'}" if _clean(product) else "",
             f"{_clean(product2)} x {_clean(qty2) or '1'}" if _clean(product2) else "",
-        )
+        ]
+        product_note = " + ".join(part for part in product_parts if part)
         records.append({
             "CUSTOMER_NAME": _clean(get(row, "name")),
             "MOBILE_NO": _best_phone(get(row, "primary_phone"), get(row, "secondary_phone"), "uae"),
@@ -204,7 +232,7 @@ def _transform_uae(filtered: pd.DataFrame, cols: dict[str, str | None]) -> pd.Da
             "ADDRESS_2": _clean(get(row, "state")),
             "ADDRESS_3": "",
             "FLAT/VILLA NO": "",
-            "DELIVERY_CITY": _clean(get(row, "city")) or _clean(get(row, "state")),
+            "DELIVERY_CITY": _delivery_city(get(row, "city"), get(row, "state")),
             "COD_AMOUNT": _cod_amount(get(row, "amount"), payment),
             "REMARKS": _join_nonempty(product_note, f"Payment: {_clean(payment)}" if _clean(payment) else ""),
             "REFERENCE_NO": reference,
