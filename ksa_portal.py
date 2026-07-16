@@ -1,48 +1,94 @@
 from __future__ import annotations
 
-import base64
-import csv
-import gzip
 import io
 import re
 import unicodedata
 from dataclasses import dataclass
-from pathlib import Path
 
 import pandas as pd
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
-
-BASE_DIR = Path(__file__).resolve().parent
-ASSET_DIR = BASE_DIR / "assets"
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 NAQEL_PRODUCTS = {
-    "ABSOLUTE MOUNTAIN AVENUE": "ABSOLUTE MOUNTAIN AVENUE_OUD AL SALAM",
-    "ARBE PURO COMBO": "ARBE PURO COMBO_LPG",
-    "LEON": "LEON_LPG",
-    "OUD LOVERS": "OUD LOVERS_LPG",
-    "PREMIUM EDITION": "PREMIUM COLLECTION_OUD AL SALAM",
-    "PREMIUM COLLECTION": "PREMIUM COLLECTION_OUD AL SALAM",
+    "ABSOLUTE MOUNTAIN AVENUE": ("ABSOLUTE MOUNTAIN AVENUE_OUD AL SALAM", 155.0),
+    "ARBE PURO COMBO": ("ARBE PURO COMBO_LPG", 160.0),
+    "LEON": ("LEON_LPG", 140.0),
+    "OUD LOVERS": ("OUD LOVERS_LPG", 180.0),
+    "PREMIUM EDITION": ("PREMIUM COLLECTION_OUD AL SALAM", 180.0),
+    "PREMIUM COLLECTION": ("PREMIUM COLLECTION_OUD AL SALAM", 180.0),
 }
+
+JNT_PRODUCTS = {
+    "ARCHER COMBO": ("THE ARCHER COMBO", 160.0),
+    "HECTOR": ("HECTOR COMBO", 170.0),
+    "MIRAMAR": ("MIRAMAR", 180.0),
+    "ASEEL COMBO": ("ASEEL COMBO", 165.0),
+    "SHADOW FLAME": ("SHADOW FLAME", 210.0),
+    "VOLGA COMBO": ("VOLGA EDITION PERFUME COMBO", 170.0),
+    "VOLGA EDITION": ("VOLGA EDITION PERFUME COMBO", 170.0),
+    "COLLECTION OF MOOD": ("COLLECTION OF MOOD", 190.0),
+}
+
+NAQEL_CITY_CODES = {
+    "riyadh": "RUH", "jeddah": "JED", "makkah": "MAC", "mecca": "MAC",
+    "taif": "TIF", "dammam": "DMM", "jubail": "QJB", "aljubail": "QJB",
+    "khobar": "DMM", "alkhobar": "DMM", "dhahran": "DMM", "abqaiq": "DMM",
+    "hofuf": "HOF", "alhofuf": "HOF", "hafaralbatin": "HBT", "buraydah": "ELQ",
+    "buraidah": "ELQ", "hail": "HAS", "madinah": "MED", "medinah": "MED",
+    "tabuk": "TUU", "yanbu": "YNB", "abha": "AHB", "jizan": "GIZ",
+    "gizan": "GIZ", "najran": "EAM", "albaha": "ABT", "arar": "RAE",
+    "alula": "ULH", "alwajh": "EJH", "alqurayyat": "URY", "sakaka": "AJF",
+    "aljouf": "AJF", "wadialdawasir": "WAE", "khamismushait": "AHB",
+    "muhayil": "AHB", "sabya": "GIZ", "bisha": "BHH", "alkhurma": "TIF",
+}
+
+PROVINCE_MAP = {
+    "riyadh": "Riyadh Province", "makkah": "Makkah Province", "mecca": "Makkah Province",
+    "jeddah": "Makkah Province", "taif": "Makkah Province", "eastern": "Eastern Province",
+    "dammam": "Eastern Province", "khobar": "Eastern Province", "alkhobar": "Eastern Province",
+    "jubail": "Eastern Province", "dhahran": "Eastern Province", "hofuf": "Eastern Province",
+    "madinah": "Madinah Province", "medinah": "Madinah Province", "tabuk": "Tabuk Province",
+    "qassim": "Qassim Province", "buraidah": "Qassim Province", "buraydah": "Qassim Province",
+    "hail": "Hail Province", "aseer": "Aseer Province", "asir": "Aseer Province",
+    "abha": "Aseer Province", "khamismushait": "Aseer Province", "jizan": "Gizan Province",
+    "gizan": "Gizan Province", "najran": "Najran Province", "albaha": "Al Baha Province",
+    "aljouf": "Al Jouf Province", "sakaka": "Al Jouf Province", "northern": "Northern Borders Province",
+}
+
+NAQEL_HEADERS = [
+    "RefNo", "Origin", "Destination", "Name", "Email", "PhoneNo", "MobileNo", "Address",
+    "Location", "NationalAddress", "BuildingNo", "POBox", "Date", "Peices", "Weight", "Width",
+    "Length", "Height", "Amount", "DeliveryInstruction", "PODType", "DeclaredValue", "Currency",
+    "Incoterm", "GoodDesc", "ConsigneeNationalID", "ConsigneeNationalIdExpiry", "ConsigneeBirthDate",
+    "Latitude", "Longitude", "OriginCountryCode", "DestinationCountryCode", "Agent Name", "Source",
+    "Payment Method", "Unit Price",
+]
+
+JNT_HEADERS = [
+    "Customer Order Number", "*Receiver name", "*Receiver phone number", "Receiver Backup NO.",
+    "Receiver province", "*Receiver city", "Receiver district", "Receiver street", "*Receiver address",
+    "Receiver Short Address", "Receiver Building Number", "Receiver Additional Number", "Sender Short Address",
+    "Receiver email", "Receiver company name", "*Product type", "Payment type", "Package Number",
+    "*Item type", "*Item weight (kg)", "*Item name", "*compensation ceiling or not?",
+    "shipment value subject to service", "Platform name", "Customer account", "COD amount",
+    "*Customer unpacking inspection", "Notes", "Agent Name", "Source", "Payment Method", "Quantity",
+    "Unit Price",
+]
 
 ALIASES = {
     "name": ["Lead Name", "Customer Name", "Name", "First Name"],
     "phone1": ["Primary Phone", "Phone 1", "Phone1", "Phone", "Mobile", "Mobile No"],
     "phone2": ["Secondary Phone", "Phone 2", "Phone2", "Alternate Phone", "WhatsApp Number"],
-    "country": ["Country"],
-    "state": ["State", "Province", "Region"],
-    "street": ["Street", "Address", "Address 1"],
-    "city": ["CITY", "City", "Delivery City"],
-    "national_code": ["National Code", "Reference No", "Order ID"],
-    "product1": ["Product", "Product Name"],
-    "qty1": ["QTY", "Quantity"],
+    "country": ["Country"], "state": ["State", "Province", "Region"],
+    "street": ["Street", "Address", "Address 1"], "city": ["CITY", "City", "Delivery City"],
+    "reference": ["National Code", "Reference No", "Order ID"],
+    "product1": ["Product", "Product Name"], "qty1": ["QTY", "Quantity"],
     "product2": ["PRODUCT 2", "Product 2"],
     "qty2": ["QTY OF PRODUCT 2", "Quantity of Product 2", "QTY 2", "Qty 2"],
     "amount": ["Actual Amount", "Forecasted Amount", "Amount", "COD Amount"],
-    "payment": ["Payment Method", "Payment"],
-    "remarks": ["Lead Description", "Remarks", "Notes"],
-    "agent": ["Assigned", "Assigned User"],
-    "source": ["Source"],
+    "payment": ["Payment Method", "Payment"], "remarks": ["Lead Description", "Remarks", "Notes"],
+    "agent": ["Assigned", "Assigned User"], "source": ["Source"],
 }
 
 
@@ -57,9 +103,7 @@ class KSAResult:
 
 
 def _clean(value) -> str:
-    if pd.isna(value):
-        return ""
-    return str(value).strip()
+    return "" if pd.isna(value) else str(value).strip()
 
 
 def _norm(value) -> str:
@@ -72,20 +116,20 @@ def _key(value) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-def _column(df: pd.DataFrame, alias_key: str, required: bool = False) -> str | None:
-    columns = {_norm(c): c for c in df.columns}
-    for alias in ALIASES[alias_key]:
+def _column(df: pd.DataFrame, key: str, required: bool = False) -> str | None:
+    columns = {_norm(col): col for col in df.columns}
+    for alias in ALIASES[key]:
         if _norm(alias) in columns:
             return columns[_norm(alias)]
     if required:
-        raise ValueError(f"Required Workpex column missing: {ALIASES[alias_key][0]}")
+        raise ValueError(f"Required Workpex column missing: {ALIASES[key][0]}")
     return None
 
 
 def _city_from_row(row: pd.Series) -> str:
     for column in row.index:
-        header = _norm(column)
-        if header.startswith("city") or "delivery city" in header:
+        name = _norm(column)
+        if name.startswith("city") or "delivery city" in name:
             value = _clean(row[column])
             if value:
                 return value
@@ -99,7 +143,7 @@ def _digits(value) -> str:
     return re.sub(r"\D", "", text)
 
 
-def _ksa_phone(value) -> str:
+def _phone(value) -> str:
     number = _digits(value)
     if number.startswith("00966"):
         number = number[5:]
@@ -111,165 +155,91 @@ def _ksa_phone(value) -> str:
 
 
 def _number(value) -> float:
-    text = _clean(value).replace(",", "")
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    match = re.search(r"-?\d+(?:\.\d+)?", _clean(value).replace(",", ""))
     return float(match.group()) if match else 0.0
 
 
-def _qty(value, product_present: bool) -> float:
-    if not product_present:
+def _qty(value, has_product: bool) -> float:
+    if not has_product:
         return 0
     number = _number(value)
     return number if number > 0 else 1
 
 
-def _template_bytes(name: str) -> bytes:
-    xlsx = ASSET_DIR / name
-    if xlsx.exists():
-        return xlsx.read_bytes()
-    gz_b64 = ASSET_DIR / f"{name}.gz.b64"
-    if gz_b64.exists():
-        return gzip.decompress(base64.b64decode(gz_b64.read_text(encoding="ascii")))
-    b64 = ASSET_DIR / f"{name}.b64"
-    if b64.exists():
-        return base64.b64decode(b64.read_text(encoding="ascii"))
-    raise FileNotFoundError(f"Missing KSA template asset: {name}")
-
-
-def _load_prices() -> dict[str, float]:
-    path = ASSET_DIR / "product_vendor.csv"
-    prices: dict[str, float] = {}
-    if not path.exists():
-        return prices
-    with path.open(encoding="utf-8-sig", newline="") as file:
-        rows = list(csv.reader(file))
-    for row in rows[2:]:
-        if len(row) < 5:
-            continue
-        name = _clean(row[1])
-        ksa = _clean(row[4])
-        if not name or not ksa or "NOT AVAILABLE" in ksa.upper() or "TRANSIT" in ksa.upper():
-            continue
-        price = _number(ksa)
-        if price > 0:
-            prices[_key(name)] = price
-    return prices
-
-
-def _load_coverage() -> tuple[set[str], set[str]]:
-    path = ASSET_DIR / "ksa_coverage.csv"
-    naqel, jnt = set(), set()
-    if not path.exists():
-        return naqel, jnt
-    with path.open(encoding="utf-8-sig", newline="") as file:
-        rows = list(csv.reader(file))
-    for row in rows[4:]:
-        if len(row) > 3 and _clean(row[3]):
-            naqel.add(_key(row[3]))
-        if len(row) > 2 and _clean(row[2]):
-            jnt.add(_key(row[2]))
-    return naqel, jnt
-
-
-PRICE_MAP = _load_prices()
-NAQEL_COVERAGE, JNT_COVERAGE = _load_coverage()
-
-
-def _canonical_product(raw: str) -> tuple[str, float, bool]:
+def _product(raw: str) -> tuple[str, float, bool]:
     key = _key(raw)
-    stripped = re.sub(r"(oudalsalam|lpg|atyaf|scentpassion|scntpassion)$", "", key)
-    for base, portal in NAQEL_PRODUCTS.items():
-        base_key = _key(base)
-        if base_key in key or base_key == stripped:
-            return portal, PRICE_MAP.get(base_key, 0.0), True
-
-    canonical = _clean(raw).upper()
-    jnt_aliases = {
-        "HECTOR": "HECTOR COMBO",
-        "ARCHER COMBO": "THE ARCHER COMBO",
-        "VOLGA COMBO": "VOLGA EDITION PERFUME COMBO",
-        "COLLECTION OF MOOD": "COLLECTION OF MOOD",
-        "ASEEL COMBO": "ASEEL COMBO",
-        "MIRAMAR": "MIRAMAR",
-        "SHADOW FLAME": "SHADOW FLAME",
-    }
-    for base, portal in jnt_aliases.items():
-        if _key(base) in key:
-            canonical = portal
-            break
-    price = 0.0
-    for price_key, value in PRICE_MAP.items():
-        if price_key and price_key in key:
-            price = value
-            break
-    return canonical, price, False
+    for name, (portal_name, price) in NAQEL_PRODUCTS.items():
+        if _key(name) in key:
+            return portal_name, price, True
+    for name, (portal_name, price) in JNT_PRODUCTS.items():
+        if _key(name) in key:
+            return portal_name, price, False
+    return _clean(raw).upper(), 0.0, False
 
 
-def _same_product(a: str, b: str) -> bool:
+def _province(state: str, city: str) -> str:
+    for text in (state, city):
+        key = _key(text)
+        for token, province in PROVINCE_MAP.items():
+            if token in key:
+                return province
+    text = _clean(state)
+    if text:
+        return text if text.lower().endswith("province") else f"{text} Province"
+    return ""
+
+
+def _destination(city: str) -> str:
+    key = _key(city)
+    if key in NAQEL_CITY_CODES:
+        return NAQEL_CITY_CODES[key]
+    for token, code in NAQEL_CITY_CODES.items():
+        if token and token in key:
+            return code
+    return ""
+
+
+def _same(a: str, b: str) -> bool:
     return bool(a and b and _key(a) == _key(b))
 
 
-def _city_maps():
-    naqel_wb = load_workbook(io.BytesIO(_template_bytes("ksa_naqel_template.xlsx")), read_only=True, data_only=True)
-    naqel_map: dict[str, tuple[str, str]] = {}
-    if "Cities" in naqel_wb.sheetnames:
-        ws = naqel_wb["Cities"]
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            code, _ar, en, _type = (list(row) + [None] * 4)[:4]
-            if en:
-                naqel_map[_key(en)] = (_clean(code), _clean(en))
-
-    jnt_wb = load_workbook(io.BytesIO(_template_bytes("ksa_jnt_template.xlsx")), read_only=True, data_only=True)
-    jnt_map: dict[str, tuple[str, str]] = {}
-    if "Sheet1" in jnt_wb.sheetnames:
-        ws = jnt_wb["Sheet1"]
-        for row in ws.iter_rows(min_row=1, values_only=True):
-            values = list(row) + [None] * 7
-            city = _clean(values[1])
-            province = _clean(values[5])
-            for alias in [city, _clean(values[2]), _clean(values[3]), _clean(values[4])]:
-                if alias:
-                    jnt_map[_key(alias)] = (province, city)
-    return naqel_map, jnt_map
-
-
-NAQEL_CITY_MAP, JNT_CITY_MAP = _city_maps()
-
-
-def _find_city(mapping: dict[str, tuple[str, str]], city: str, address: str = "") -> tuple[str, str]:
-    city_key = _key(city)
-    if city_key in mapping:
-        return mapping[city_key]
-    address_key = _key(address)
-    matches = [(key, value) for key, value in mapping.items() if key and key in address_key]
-    if matches:
-        matches.sort(key=lambda item: len(item[0]), reverse=True)
-        return matches[0][1]
-    return "", city
-
-
-def _route_order(product1: str, product2: str, city: str) -> str:
-    _, _, naqel1 = _canonical_product(product1)
-    _, _, naqel2 = _canonical_product(product2) if product2 else ("", 0.0, True)
-    city_key = _key(city)
-    city_covered = city_key in NAQEL_COVERAGE or city_key in NAQEL_CITY_MAP
-    return "naqel" if naqel1 and naqel2 and city_covered else "jnt"
-
-
-def _clear_data(ws, start_row: int = 2):
-    if ws.max_row >= start_row:
-        ws.delete_rows(start_row, ws.max_row - start_row + 1)
-
-
-def _write_rows(ws, rows: list[list], start_row: int = 2):
+def _style_sheet(ws, headers: list[str], phone_column: int):
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(1, col, header)
+        cell.font = Font(name="Calibri", size=10, bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+        cell.fill = PatternFill(fill_type="solid", fgColor="FFF2CC")
+        ws.column_dimensions[get_column_letter(col)].width = 18
+    ws.column_dimensions[get_column_letter(9)].width = 55
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(1, ws.max_row)}"
     duplicate_fill = PatternFill(fill_type="solid", fgColor="FFC7CE")
-    phones = [str(row[2] or "") for row in rows]
-    duplicates = {phone for phone in phones if phone and phones.count(phone) > 1}
-    for row_index, values in enumerate(rows, start=start_row):
-        for column_index, value in enumerate(values, start=1):
-            cell = ws.cell(row_index, column_index, value)
-            if str(values[2] or "") in duplicates:
+    values = [str(ws.cell(row, phone_column).value or "") for row in range(2, ws.max_row + 1)]
+    duplicates = {value for value in values if value and values.count(value) > 1}
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row, col)
+            cell.font = Font(name="Calibri", size=10)
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+            cell.border = border
+            if str(ws.cell(row, phone_column).value or "") in duplicates:
                 cell.fill = duplicate_fill
+
+
+def _workbook(sheet_name: str, headers: list[str], rows: list[list], phone_column: int) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = sheet_name
+    sheet.append(headers)
+    for row in rows:
+        sheet.append(row)
+    _style_sheet(sheet, headers, phone_column)
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def build_ksa_exports(source_df: pd.DataFrame) -> KSAResult:
@@ -282,136 +252,102 @@ def build_ksa_exports(source_df: pd.DataFrame) -> KSAResult:
         column = cols.get(key)
         return row[column] if column else ""
 
-    filtered = source_df[source_df[cols["country"]].map(
+    mask = source_df[cols["country"]].map(
         lambda value: _norm(value) in {"saudi arabia", "ksa", "saudi"}
-    )].copy()
-
-    naqel_records: list[dict] = []
-    jnt_records: list[dict] = []
+    )
+    filtered = source_df[mask].copy()
+    naqel_records, jnt_records = [], []
+    naqel_rows, jnt_rows = [], []
     naqel_orders = 0
     jnt_orders = 0
 
     for index, row in filtered.iterrows():
-        product1_raw = _clean(get(row, "product1"))
-        product2_raw = _clean(get(row, "product2"))
-        if not product1_raw:
+        raw1 = _clean(get(row, "product1"))
+        raw2 = _clean(get(row, "product2"))
+        if not raw1:
             continue
 
-        product1, price1, _ = _canonical_product(product1_raw)
-        product2, price2, _ = _canonical_product(product2_raw) if product2_raw else ("", 0.0, False)
-        qty1 = _qty(get(row, "qty1"), bool(product1_raw))
-        qty2 = _qty(get(row, "qty2"), bool(product2_raw))
-        total_amount = _number(get(row, "amount"))
+        product1, price1, is_naqel1 = _product(raw1)
+        product2, price2, is_naqel2 = _product(raw2) if raw2 else ("", 0.0, True)
+        qty1 = _qty(get(row, "qty1"), bool(raw1))
+        qty2 = _qty(get(row, "qty2"), bool(raw2))
+        total = _number(get(row, "amount"))
+        total_qty = qty1 + qty2
+        fallback = total / total_qty if total_qty else total
+        unit1 = price1 or fallback
+        unit2 = price2 or fallback
         city = _city_from_row(row) or _clean(get(row, "state"))
+        state = _clean(get(row, "state"))
         street = _clean(get(row, "street"))
-        route = _route_order(product1_raw, product2_raw, city)
-        phone = _ksa_phone(get(row, "phone1")) or _ksa_phone(get(row, "phone2"))
-        backup = _ksa_phone(get(row, "phone2"))
-        reference = _clean(get(row, "national_code")) or f"EMK{index + 2}"
+        destination = _destination(city)
+        route = "naqel" if is_naqel1 and is_naqel2 and destination else "jnt"
+        phone = _phone(get(row, "phone1")) or _phone(get(row, "phone2"))
+        backup = _phone(get(row, "phone2"))
+        reference = _clean(get(row, "reference")) or f"EMK{index + 2}"
         payment = _clean(get(row, "payment"))
         remarks = _clean(get(row, "remarks"))
         agent = _clean(get(row, "agent"))
         source = _clean(get(row, "source"))
 
-        total_qty = qty1 + qty2
-        fallback_unit = total_amount / total_qty if total_qty else total_amount
-        unit1 = price1 or fallback_unit
-        unit2 = price2 or fallback_unit
-
-        lines = []
-        if _same_product(product1, product2):
-            lines.append((product1, qty1 + qty2, unit1))
-        else:
-            lines.append((product1, qty1, unit1))
-            if product2:
+        lines = [(product1, qty1, unit1)]
+        if product2:
+            if _same(product1, product2):
+                lines = [(product1, qty1 + qty2, unit1)]
+            else:
                 lines.append((product2, qty2, unit2))
-
-        common = {
-            "ref": reference,
-            "name": _clean(get(row, "name")),
-            "phone": phone,
-            "backup": backup,
-            "city": city,
-            "street": street,
-            "payment": payment,
-            "remarks": remarks,
-            "agent": agent,
-            "source": source,
-        }
 
         if route == "naqel":
             naqel_orders += 1
-            destination, matched_city = _find_city(NAQEL_CITY_MAP, city, street)
-            for line_no, (product, quantity, unit_price) in enumerate(lines):
+            for product, quantity, unit_price in lines:
+                amount = unit_price * quantity
                 naqel_records.append({
-                    **common,
-                    "dest": destination,
-                    "matched_city": matched_city,
-                    "product": product,
-                    "qty": quantity,
-                    "unit_price": unit_price,
-                    "line_no": line_no,
+                    "Reference": reference,
+                    "City": city,
+                    "Destination": destination,
+                    "Product": product,
+                    "Quantity": quantity,
+                    "Unit Price": unit_price,
+                    "Agent Name": agent,
+                    "Source": source,
+                    "Payment Method": payment,
                 })
+                naqel_rows.append([
+                    reference, "RUH", destination, _clean(get(row, "name")), None,
+                    phone, phone, city, street, None, None, None, None, quantity, 1.5,
+                    10, 10, 10, amount, remarks or "NIL", "NIL", amount, "SAR",
+                    "OTHER/UNKNOWN", product, None, None, None, None, None, "KSA", "KSA",
+                    agent, source, payment, unit_price,
+                ])
         else:
             jnt_orders += 1
-            province, matched_city = _find_city(JNT_CITY_MAP, city, street)
-            for line_no, (product, quantity, unit_price) in enumerate(lines):
+            province = _province(state, city)
+            for product, quantity, unit_price in lines:
+                amount = unit_price * quantity
                 jnt_records.append({
-                    **common,
-                    "province": province,
-                    "matched_city": matched_city,
-                    "product": product,
-                    "qty": quantity,
-                    "unit_price": unit_price,
-                    "line_no": line_no,
+                    "Reference": reference,
+                    "Province": province,
+                    "City": city,
+                    "Product": product,
+                    "Quantity": quantity,
+                    "Unit Price": unit_price,
+                    "Agent Name": agent,
+                    "Source": source,
+                    "Payment Method": payment,
                 })
-
-    naqel_wb = load_workbook(io.BytesIO(_template_bytes("ksa_naqel_template.xlsx")))
-    naqel_ws = naqel_wb["GenerateWaybills"]
-    _clear_data(naqel_ws, 2)
-    for row_index, record in enumerate(naqel_records, start=2):
-        declared = record["unit_price"] * record["qty"]
-        values = [
-            record["ref"], "RUH", record["dest"], record["name"], None,
-            record["phone"], record["phone"], record["matched_city"], record["street"],
-            None, None, None, None, record["qty"], 1.5, 10, 10, 10, declared,
-            record["remarks"] or "NIL", "NIL", declared, "SAR", "OTHER/UNKNOWN",
-            record["product"], None, None, None, None, None, "KSA", "KSA",
-        ]
-        for column_index, value in enumerate(values, start=1):
-            naqel_ws.cell(row_index, column_index, value)
-    naqel_output = io.BytesIO()
-    naqel_wb.save(naqel_output)
-
-    jnt_wb = load_workbook(io.BytesIO(_template_bytes("ksa_jnt_template.xlsx")))
-    jnt_ws = jnt_wb["Template"]
-    _clear_data(jnt_ws, 2)
-    extra_headers = ["Agent Name", "Source", "Payment Method", "Quantity", "Unit Price"]
-    for index, header in enumerate(extra_headers, start=29):
-        jnt_ws.cell(1, index, header)
-
-    jnt_rows = []
-    for record in jnt_records:
-        amount = record["unit_price"] * record["qty"]
-        jnt_rows.append([
-            record["ref"], record["name"], int(record["phone"]) if record["phone"] else None,
-            int(record["backup"]) if record["backup"] else None, record["province"],
-            record["matched_city"], None, None, record["street"], None, None, None,
-            "HOSA5275", None, None, "STANDARD",
-            "Cash" if _norm(record["payment"]) in {"cod", "cash on delivery"} else record["payment"],
-            None, "Others", 1, record["product"], "No", None, None, None, amount,
-            "NO", record["remarks"], record["agent"], record["source"], record["payment"],
-            record["qty"], record["unit_price"],
-        ])
-    _write_rows(jnt_ws, jnt_rows, 2)
-    jnt_output = io.BytesIO()
-    jnt_wb.save(jnt_output)
+                jnt_rows.append([
+                    reference, _clean(get(row, "name")), int(phone) if phone else None,
+                    int(backup) if backup else None, province, city, None, None, street,
+                    None, None, None, "HOSA5275", None, None, "STANDARD",
+                    "Cash" if _norm(payment) in {"cod", "cash on delivery"} else payment,
+                    None, "Others", 1, product, "No", None, None, None, amount, "NO",
+                    remarks, agent, source, payment, quantity, unit_price,
+                ])
 
     return KSAResult(
         pd.DataFrame(naqel_records),
         pd.DataFrame(jnt_records),
-        naqel_output.getvalue(),
-        jnt_output.getvalue(),
+        _workbook("GenerateWaybills", NAQEL_HEADERS, naqel_rows, 6),
+        _workbook("Template", JNT_HEADERS, jnt_rows, 3),
         naqel_orders,
         jnt_orders,
     )
