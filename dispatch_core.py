@@ -10,10 +10,21 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 
 UAE_HEADERS = [
-    "CUSTOMER_NAME", "MOBILE_NO", "LANDLINE_NO", "ADDRESS_1", "ADDRESS_2",
-    "ADDRESS_3", "FLAT/VILLA NO", "DELIVERY_CITY", "COD_AMOUNT", "REMARKS",
-    "REFERENCE_NO", "OTHER_REMARKS", "COLLECT_RETURN (YES/NO)", "Agent Name", "Source",
-    "Total Qty", "Payment Method",
+    "CUSTOMER_NAME",
+    "MOBILE_NO",
+    "LANDLINE_NO",
+    "ADDRESS_1",
+    "ADDRESS_2",
+    "ADDRESS_3",
+    "FLAT/VILLANO",
+    "DELIVERY_CITY",
+    "COD_AMOUNT",
+    "REMARKS",
+    "REFERENCE_NO",
+    "OTHER_REMARKS",
+    "Agent Name",
+    "Source",
+    "Payment Method",
 ]
 
 GCC_HEADERS = [
@@ -227,20 +238,13 @@ def _transform_uae(filtered: pd.DataFrame, cols: dict[str, str | None]) -> pd.Da
     records = []
     for index, row in filtered.iterrows():
         product = get(row, "product")
-        qty = get(row, "qty")
         product2 = get(row, "product2")
-        qty2 = get(row, "qty2")
         payment = get(row, "payment")
         reference = _clean(get(row, "national_code")) or f"WPX-{index + 2}"
         product_note = " + ".join(
             value for value in (_clean(product), _clean(product2)) if value
         )
 
-        qty1_value = _money(qty) if _clean(qty) else (1 if _clean(product) else 0)
-        qty2_value = _money(qty2) if _clean(qty2) else (1 if _clean(product2) else 0)
-        total_qty = qty1_value + qty2_value
-        if float(total_qty).is_integer():
-            total_qty = int(total_qty)
         records.append({
             "CUSTOMER_NAME": _clean(get(row, "name")),
             "MOBILE_NO": _best_phone(get(row, "primary_phone"), get(row, "secondary_phone"), "uae"),
@@ -248,16 +252,14 @@ def _transform_uae(filtered: pd.DataFrame, cols: dict[str, str | None]) -> pd.Da
             "ADDRESS_1": _clean(get(row, "street")),
             "ADDRESS_2": _clean(get(row, "state")),
             "ADDRESS_3": "",
-            "FLAT/VILLA NO": "",
+            "FLAT/VILLANO": "",
             "DELIVERY_CITY": _delivery_city(row, get(row, "state")),
             "COD_AMOUNT": _money(get(row, "amount")),
             "REMARKS": product_note,
             "REFERENCE_NO": reference,
             "OTHER_REMARKS": _clean(get(row, "description")),
-            "COLLECT_RETURN (YES/NO)": "NO",
             "Agent Name": _clean(get(row, "agent_name")),
             "Source": _clean(get(row, "source")),
-            "Total Qty": total_qty,
             "Payment Method": _clean(payment),
         })
     return pd.DataFrame(records, columns=UAE_HEADERS)
@@ -333,6 +335,8 @@ def create_workbook(export_df: pd.DataFrame, template_file, dispatch_type: str) 
         ws = wb["Upload Format"] if "Upload Format" in wb.sheetnames else wb.active
         if ws.max_row > 1:
             ws.delete_rows(2, ws.max_row - 1)
+        if ws.max_column > len(UAE_HEADERS):
+            ws.delete_cols(len(UAE_HEADERS) + 1, ws.max_column - len(UAE_HEADERS))
         _apply_rows(ws, export_df, UAE_HEADERS)
         for row_index in range(2, ws.max_row + 1):
             ws.cell(row=row_index, column=2).number_format = "@"
